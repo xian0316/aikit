@@ -66,9 +66,11 @@ pub const TOOLS: &[Tool] = &[
 pub fn is_tool_installed(tool_id: &str) -> bool {
     match tool_id {
         "claude-code" => check_cmd("claude") || check_dir(".claude"),
-        "opencode"    => check_cmd("opencode"),
-        "openclaw"    => check_cmd("openclaw"),
-        "codex"       => check_cmd("codex"),
+        "opencode"    => check_cmd("opencode")
+                         || check_nested_dir(&[".config", "opencode"])
+                         || check_nested_dir(&[".local", "share", "opencode"]),
+        "openclaw"    => check_cmd("openclaw") || check_dir(".openclaw"),
+        "codex"       => check_cmd("codex") || check_dir(".codex"),
         "hermes"      => check_cmd("hermes") || check_dir(".hermes"),
         "trae-cn"     => check_dir(".trae-cn") || check_appdata_dir("Trae CN"),
         _ => false,
@@ -98,6 +100,13 @@ fn check_cmd(cmd: &str) -> bool {
 /// 检查 home 目录下是否有某个隐藏目录
 fn check_dir(dir_name: &str) -> bool {
     home_dir().join(dir_name).exists()
+}
+
+/// 检查 home 目录下多层嵌套目录是否存在（如 .config/opencode）
+fn check_nested_dir(parts: &[&str]) -> bool {
+    let mut p = home_dir();
+    for part in parts { p = p.join(part); }
+    p.exists()
 }
 
 /// 检查 AppData/Roaming 下是否有某个目录

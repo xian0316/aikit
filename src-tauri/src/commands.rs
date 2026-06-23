@@ -1,6 +1,7 @@
 use serde_json::{json, Value};
 use std::fs;
 use std::path::Path;
+use tauri::Emitter;
 
 use crate::git;
 use crate::logger;
@@ -12,7 +13,18 @@ use crate::store;
 
 #[tauri::command]
 pub async fn repo_list() -> Result<Value, String> {
-    Ok(store::get_key("repos"))
+    // 兼容旧数据：没有 status 字段的仓库视为 ready
+    let mut repos = store::get_key("repos");
+    if let Some(arr) = repos.as_array_mut() {
+        for r in arr.iter_mut() {
+            if r.get("status").is_none() {
+                if let Some(obj) = r.as_object_mut() {
+                    obj.insert("status".to_string(), Value::String("ready".to_string()));
+                }
+            }
+        }
+    }
+    Ok(repos)
 }
 
 #[tauri::command]
@@ -38,14 +50,13 @@ pub async fn repo_add(
         }
     }
 
-    git::clone_repo(&owner, &name, &branch, &id)?;
-
     let repo = json!({
         "id": id,
         "owner": owner,
         "name": name,
         "branch": branch,
         "subdir": subdir.unwrap_or_default(),
+        "status": "cloning",
         "addedAt": format!("{}", std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .map(|d| d.as_secs()).unwrap_or(0))
@@ -59,6 +70,64 @@ pub async fn repo_add(
 
     logger::log("info", "repo-add", json!({ "owner": owner, "name": name }));
     Ok(repo)
+}
+
+/// 异步 clone 仓库（添加后调用，完成后通过事件通知前端）
+#[tauri::command]
+pub async fn repo_clone(
+    app: tauri::AppHandle,
+    owner: String,
+    name: String,
+    branch: String,
+    repo_id: String,
+) -> Result<(), String> {
+    // 在独立线程执行 clone（阻塞操作），通过 channel 拿结果
+    let (tx, rx) = std::sync::mpsc::channel();
+    let repo_id_for_thread = repo_id.clone();
+    std::thread::spawn(move || {
+        let result = git::clone_repo(&owner, &name, &branch, &repo_id_for_thread);
+        let _ = tx.send(result);
+    });
+    let result = rx.recv().map_err(|e| e.to_string())?;
+
+    // 更新仓库状态
+    let new_status = match &result {
+        Ok(_) => "ready",
+        Err(_) => "error",
+    };
+    update_repo_status(&repo_id, new_status);
+
+    // 通知前端
+    let _ = app.emit("repo-cloned", json!({
+        "repoId": repo_id,
+        "success": result.is_ok(),
+        "error": result.as_ref().err().cloned().unwrap_or_default()
+    }));
+
+    if let Err(e) = &result {
+        return Err(e.clone());
+    }
+    Ok(())
+}
+
+/// 更新仓库状态字段
+fn update_repo_status(repo_id: &str, status: &str) {
+    let repos = store::get_key("repos");
+    let mut changed = false;
+    let mut repos_arr = repos.clone();
+    if let Some(arr) = repos_arr.as_array_mut() {
+        for r in arr.iter_mut() {
+            if r.get("id").and_then(|v| v.as_str()) == Some(repo_id) {
+                if let Some(obj) = r.as_object_mut() {
+                    obj.insert("status".to_string(), Value::String(status.to_string()));
+                    changed = true;
+                }
+            }
+        }
+    }
+    if changed {
+        store::set_key("repos", repos_arr);
+    }
 }
 
 /// 从 GitHub URL 解析 owner 和 name

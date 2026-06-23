@@ -33,6 +33,7 @@ pub fn run() {
             // 仓库管理
             commands::repo_list,
             commands::repo_add,
+            commands::repo_clone,
             commands::repo_delete,
             commands::repo_pull,
             // 技能
