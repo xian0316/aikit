@@ -1,0 +1,17 @@
+{
+  "identifier": "default",
+  "description": "AIKit 默认权限",
+  "windows": ["main"],
+  "permissions": [
+    "core:default",
+    "core:event:default",
+    "core:window:default",
+    "core:webview:default",
+    "core:app:default",
+    "dialog:default",
+    "shell:allow-open",
+    "updater:default",
+    "process:allow-restart",
+    "process:allow-exit"
+  ]
+}

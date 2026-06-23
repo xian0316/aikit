@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+
+# Build output
+dist/
+frontend/dist/
+
+# Rust / Tauri
+src-tauri/target/
+src-tauri/Cargo.lock
+src-tauri/gen/schemas/
+
+# Tauri signing private key (NEVER commit)
+*.key
+.tauri/
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Logs
+*.log
+
+# Env
+.env
+.env.local
+
+# Tmp
+tabler-icons.json

@@ -1,0 +1,39 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AIKit</title>
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <aside class="sidebar">
+    <div class="sidebar-header">
+      <span class="logo-dot"></span>
+      <span class="logo">AIKit</span>
+    </div>
+    <div class="sidebar-search">
+      <input type="text" id="global-search" placeholder="搜索技能..." oninput="App.onGlobalSearch(this.value)">
+    </div>
+    <nav class="sidebar-nav" id="sidebar-nav"></nav>
+    <div class="sidebar-footer">
+      <span class="muted" id="repo-count">—</span>
+    </div>
+  </aside>
+
+  <main class="main">
+    <header class="toolbar" id="toolbar"></header>
+    <div class="content" id="content"></div>
+    <footer class="statusbar">
+      <span id="status-text">就绪</span>
+    </footer>
+  </main>
+
+  <div id="modal-overlay" class="modal-overlay hidden">
+    <div class="modal" id="modal"></div>
+  </div>
+  <div id="toast-container"></div>
+
+  <script src="app.js"></script>
+</body>
+</html>
