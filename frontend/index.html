@@ -7,17 +7,17 @@
   <link rel="stylesheet" href="styles.css">
 </head>
 <body>
-  <aside class="sidebar">
+  <aside class="sidebar" aria-label="侧边导航">
     <div class="sidebar-header">
-      <span class="logo-dot"></span>
+      <span class="logo-dot" aria-hidden="true"></span>
       <span class="logo">AIKit</span>
     </div>
-    <div class="sidebar-search">
-      <input type="text" id="global-search" placeholder="搜索技能..." oninput="App.onGlobalSearch(this.value)">
-    </div>
-    <nav class="sidebar-nav" id="sidebar-nav"></nav>
+    <nav class="sidebar-nav" id="sidebar-nav" aria-label="主导航"></nav>
     <div class="sidebar-footer">
       <span class="muted" id="repo-count">—</span>
+      <div class="footer-actions">
+        <button type="button" class="icon-btn" id="theme-toggle" aria-label="切换深色/浅色主题" title="切换主题"></button>
+      </div>
     </div>
   </aside>
 
@@ -29,7 +29,7 @@
     </footer>
   </main>
 
-  <div id="modal-overlay" class="modal-overlay hidden">
+  <div id="modal-overlay" class="modal-overlay hidden" role="dialog" aria-modal="true" aria-labelledby="modal-title">
     <div class="modal" id="modal"></div>
   </div>
   <div id="toast-container"></div>

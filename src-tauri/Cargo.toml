@@ -1,6 +1,6 @@
 [package]
 name = "aikit"
-version = "1.0.1"
+version = "1.0.2"
 description = "AI 工具技能管理器"
 edition = "2021"
 

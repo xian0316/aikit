@@ -25,6 +25,9 @@ const ICONS = {
   externalLink: '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 6H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2v-6"/><path d="M11 13l9-9"/><path d="M15 4h5v5"/></svg>',
   refresh:      '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 11a8.1 8.1 0 0 0-15.5-2"/><path d="M4 4v5h5"/><path d="M4 13a8.1 8.1 0 0 0 15.5 2"/><path d="M20 20v-5h-5"/></svg>',
   rocket:       '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 16.5c-1.5 1.26-2 5-2 5s3.74-.5 5-2c.71-.84.7-2.13-.09-2.91a2.18 2.18 0 0 0-2.91 0z"/><path d="M12 15l-3-3a22 22 0 0 1 2-3.95A12.88 12.88 0 0 1 22 2c0 2.72-.78 7.5-6 11a22.35 22.35 0 0 1-4 2z"/><path d="M9 12H4s.55-3.03 2-4c1.62-1.08 5 0 5 0M12 15v5s3.03-.55 4-2c1.08-1.62 0-5 0-5"/></svg>',
+  sun:          '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.93 4.93l1.41 1.41M17.66 17.66l1.41 1.41M2 12h2M20 12h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41"/></svg>',
+  moon:         '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9z"/></svg>',
+  x:            '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6L6 18M6 6l12 12"/></svg>',
 };
 
 function icon(name, size) {
@@ -35,6 +38,23 @@ function icon(name, size) {
 
 function repoUrl(owner, name) {
   return `https://github.com/${owner}/${name}`;
+}
+
+// 解析 skills.sh 的 source 字段为 {owner, repo}，失败返回 null
+function parseSource(source) {
+  const parts = String(source || '').split('/');
+  if (parts[0] === 'github' && parts.length >= 3) {
+    return { owner: parts[1], repo: parts[2] };
+  } else if (parts.length >= 2) {
+    return { owner: parts[0], repo: parts[1] };
+  }
+  return null;
+}
+
+// 根据 skills.sh source 生成 GitHub URL，无法解析返回 null
+function sourceUrl(source) {
+  const p = parseSource(source);
+  return p ? repoUrl(p.owner, p.repo) : null;
 }
 
 async function openExternal(url) {
@@ -49,6 +69,7 @@ const api = {
   repo: {
     list: ()                      => invoke('repo_list'),
     add: (url, branch, subdir)    => invoke('repo_add', { url, branch, subdir }),
+    clone: (owner, name, branch, repoId) => invoke('repo_clone', { owner, name, branch, repoId }),
     del: (repoId)                 => invoke('repo_delete', { repoId }),
     pull: (repoId)                => invoke('repo_pull', { repoId }),
   },
@@ -126,12 +147,70 @@ const App = {
       state.tools     = await api.tools.list();
       state.settings  = await api.settings.get();
       try { state.appVersion = await window.__TAURI__.app.getVersion(); } catch {}
+      // 监听仓库克隆完成事件，自动刷新列表
+      if (window.__TAURI__?.event?.listen) {
+        window.__TAURI__.event.listen('repo-cloned', async (ev) => {
+          const payload = ev.payload || {};
+          state.repos = await api.repo.list();
+          if (state.view === 'discover' && state.tab === 'repos') this.renderContent();
+          this.renderRepoCount();
+          if (payload.success === false) {
+            this.toast(`克隆失败: ${payload.error || '未知错误'}`, 'error');
+          } else if (payload.success === true) {
+            this.toast('仓库克隆完成', 'success');
+          }
+        });
+      }
       this.renderSidebar();
       this.renderToolbar();
       this.renderContent();
       this.renderRepoCount();
+      this.initTheme();
+      this.bindGlobalEvents();
     } catch (e) {
       this.toast('初始化失败: ' + e, 'error');
+    }
+  },
+
+  // ═══ 主题 ═══
+  initTheme() {
+    const saved = localStorage.getItem('aikit-theme');
+    const prefersDark = window.matchMedia?.('(prefers-color-scheme: dark)').matches;
+    const theme = saved || (prefersDark ? 'dark' : 'light');
+    this.applyTheme(theme);
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.addEventListener('click', () => this.toggleTheme());
+  },
+
+  applyTheme(theme) {
+    document.documentElement.setAttribute('data-theme', theme);
+    const btn = document.getElementById('theme-toggle');
+    if (btn) btn.innerHTML = theme === 'dark' ? icon('sun', 16) : icon('moon', 16);
+  },
+
+  toggleTheme() {
+    const cur = document.documentElement.getAttribute('data-theme') || 'light';
+    const next = cur === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('aikit-theme', next);
+    this.applyTheme(next);
+  },
+
+  // ═══ 全局事件（modal 关闭）═══
+  bindGlobalEvents() {
+    const overlay = document.getElementById('modal-overlay');
+    if (overlay && !overlay._bound) {
+      overlay._bound = true;
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) this.closeModal();
+      });
+    }
+    if (!document._keyBound) {
+      document._keyBound = true;
+      document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && overlay && !overlay.classList.contains('hidden')) {
+          this.closeModal();
+        }
+      });
     }
   },
 
@@ -140,11 +219,12 @@ const App = {
     const nav = document.getElementById('sidebar-nav');
     nav.innerHTML = NAV.map(section => `
       <div class="nav-group">
-        <div class="nav-group-label muted">${section.group}</div>
+        <div class="nav-group-label">${section.group}</div>
         ${section.items.map(item => `
-          <button class="nav-item ${state.view === item.id ? 'active' : ''}"
-            data-view="${item.id}" onclick="App.switchView('${item.id}')">
-            <span class="nav-icon">${icon(item.icon, 16)}</span><span>${item.label}</span>
+          <button type="button" class="nav-item ${state.view === item.id ? 'active' : ''}"
+            data-view="${item.id}" aria-current="${state.view === item.id ? 'page' : 'false'}"
+            onclick="App.switchView('${item.id}')">
+            <span class="nav-icon" aria-hidden="true">${icon(item.icon, 16)}</span><span>${item.label}</span>
           </button>`).join('')}
       </div>`).join('');
   },
@@ -170,28 +250,28 @@ const App = {
   renderToolbar() {
     const tb = document.getElementById('toolbar');
     const searchHTML = `<input type="text" id="search-input" placeholder="搜索..." value="${state.search}"
-      oninput="App.onSearch(this.value)" style="flex:1;max-width:350px">`;
+      aria-label="搜索" oninput="App.onSearch(this.value)" class="toolbar-search">`;
 
     if (state.view === 'my-skills') {
       tb.innerHTML = `<h3>我的技能</h3>${searchHTML}<div class="toolbar-spacer"></div>
-        <button class="btn btn-sm btn-outline" onclick="App.checkUpdates()">检查更新</button>`;
+        <button type="button" class="btn btn-sm btn-outline" onclick="App.checkUpdates()">检查更新</button>`;
     } else if (state.view === 'discover') {
       if (state.currentRepoId) {
         // 仓库详情
         const repo = state.repos.find(r => r.id === state.currentRepoId);
-        tb.innerHTML = `<button class="btn btn-outline btn-sm" onclick="App.backToRepos()">${icon('arrowLeft', 14)} 返回</button>
-          <h3 style="margin:0">${repo ? this.esc(repo.owner+'/'+repo.name) : ''}</h3>
-          ${repo ? `<button class="icon-btn" title="在 GitHub 中打开" onclick="openExternal('${repoUrl(repo.owner, repo.name)}')">${icon('externalLink', 16)}</button>` : ''}
+        tb.innerHTML = `<button type="button" class="btn btn-outline btn-sm" onclick="App.backToRepos()">${icon('arrowLeft', 14)} 返回</button>
+          <h3>${repo ? this.esc(repo.owner+'/'+repo.name) : ''}</h3>
+          ${repo ? `<button type="button" class="icon-btn" aria-label="在 GitHub 中打开" title="在 GitHub 中打开" onclick="openExternal('${repoUrl(repo.owner, repo.name)}')">${icon('externalLink', 16)}</button>` : ''}
           <div class="toolbar-spacer"></div>${searchHTML}
-          <button class="btn btn-sm btn-outline" onclick="App.refreshSkills()">刷新</button>`;
+          <button type="button" class="btn btn-sm btn-outline" onclick="App.refreshSkills()">刷新</button>`;
       } else {
         // 发现页：tab 切换 + 搜索 + 仓库管理
-        const tabBtns = `<div class="flex gap-sm">
-          <button class="btn btn-sm ${state.tab==='repos'?'':'btn-outline'}" onclick="App.switchTab('repos')">仓库</button>
-          <button class="btn btn-sm ${state.tab==='skills-sh'?'':'btn-outline'}" onclick="App.switchTab('skills-sh')">skills.sh</button>
+        const tabBtns = `<div class="flex gap-sm" role="tablist">
+          <button type="button" role="tab" aria-selected="${state.tab==='repos'}" class="btn btn-sm ${state.tab==='repos'?'':'btn-outline'}" onclick="App.switchTab('repos')">仓库</button>
+          <button type="button" role="tab" aria-selected="${state.tab==='skills-sh'}" class="btn btn-sm ${state.tab==='skills-sh'?'':'btn-outline'}" onclick="App.switchTab('skills-sh')">skills.sh</button>
         </div>`;
         tb.innerHTML = `${tabBtns}${searchHTML}<div class="toolbar-spacer"></div>
-          <button class="btn btn-sm btn-outline" onclick="App.showAddRepo()">仓库管理</button>`;
+          <button type="button" class="btn btn-sm btn-outline" onclick="App.showAddRepo()">仓库管理</button>`;
       }
     } else if (state.view === 'settings') {
       tb.innerHTML = `<h3>设置</h3>`;
@@ -235,21 +315,21 @@ const App = {
         if (!toolInstalled) {
           return `<span class="toggle-btn disabled" title="未安装">${t.name}</span>`;
         }
-        return `<button class="toggle-btn ${on ? 'on' : ''}" onclick="App.toggleApp('${this.esc(i.dirName)}','${t.id}',${!on})">${t.name}</button>`;
+        return `<button type="button" class="toggle-btn ${on ? 'on' : ''}" aria-pressed="${on}" onclick="App.toggleApp('${this.esc(i.dirName)}','${t.id}',${!on})">${t.name}</button>`;
       }).join(' ');
 
-      return `<div class="repo-item ${hasUpdate ? 'has-update' : ''}" style="flex-direction:column;align-items:stretch;gap:var(--sp-3);padding:var(--sp-4) var(--sp-5)">
-        <div class="flex" style="justify-content:space-between">
+      return `<div class="repo-item my-skill-item ${hasUpdate ? 'has-update' : ''}">
+        <div class="my-skill-head">
           <div>
             <div class="repo-name">${this.esc(i.skillName)}${hasUpdate ? '<span class="tag update">可更新</span>' : ''}</div>
-            <div class="muted" style="margin-top:2px">${enabledCount > 0 ? enabledCount + ' 个工具已启用' : '未启用任何工具'}</div>
+            <div class="muted my-skill-sub">${enabledCount > 0 ? enabledCount + ' 个工具已启用' : '未启用任何工具'}</div>
           </div>
           <div class="flex gap-sm">
-            ${hasUpdate ? `<button class="btn btn-sm btn-update" onclick="App.applyUpdate('${this.esc(i.dirName)}')">${icon('download', 14)} 更新</button>` : ''}
-            <button class="btn btn-sm btn-red" onclick="App.uninstallSkill('${this.esc(i.dirName)}')">移除</button>
+            ${hasUpdate ? `<button type="button" class="btn btn-sm btn-update" onclick="App.applyUpdate('${this.esc(i.dirName)}')">${icon('download', 14)} 更新</button>` : ''}
+            <button type="button" class="btn btn-sm btn-red" onclick="App.uninstallSkill('${this.esc(i.dirName)}')">移除</button>
           </div>
         </div>
-        <div class="flex gap-sm" style="flex-wrap:wrap">${toggles}</div>
+        <div class="my-skill-toggles">${toggles}</div>
       </div>`;
     }).join('');
     this.updateStatus(`${list.length} 个已安装${state.updates.length ? ' | ' + state.updates.length + ' 个可更新' : ''}`);
@@ -267,18 +347,39 @@ const App = {
         <p>${state.search ? '没有匹配' : '还没有添加仓库，去仓库管理添加'}</p></div>`;
       return;
     }
-    c.innerHTML = `<div class="card-grid">${repos.map(r => `
-      <div class="skill-card repo-card" onclick="App.enterRepo('${r.id}')" style="cursor:pointer">
+    c.innerHTML = `<div class="card-grid">${repos.map(r => {
+      const status = r.status || 'ready';
+      const clickable = status === 'ready';
+      const clickAttr = clickable
+        ? `role="button" tabindex="0" aria-label="进入仓库 ${this.esc(r.owner+'/'+r.name)}" onclick="App.enterRepo('${r.id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();App.enterRepo('${r.id}')}"`
+        : 'aria-disabled="true"';
+      const cls = `skill-card repo-card ${status !== 'ready' ? 'repo-card-pending ' + status : ''} ${clickable ? 'clickable' : ''}`;
+      let badge = '';
+      if (status === 'cloning') {
+        badge = `<span class="tag tag-cloning">${icon('loader', 14)} 克隆中...</span>`;
+      } else if (status === 'error') {
+        badge = `<span class="tag tag-error">${icon('alertTriangle', 14)} 克隆失败</span>`;
+      } else {
+        badge = `<span class="tag" id="count-${r.id}">${icon('loader', 14)} 加载中</span>`;
+      }
+      const retryBtn = status === 'error'
+        ? `<button type="button" class="btn btn-sm" onclick="event.stopPropagation();App.retryClone('${r.id}','${this.esc(r.owner)}','${this.esc(r.name)}','${this.esc(r.branch)}')">${icon('refresh', 14)} 重试</button>`
+        : '';
+      return `
+      <div class="${cls}" ${clickAttr}>
         <div class="card-row">
           <div class="name">${this.esc(r.owner)}/${this.esc(r.name)}</div>
-          <button class="icon-btn" title="在 GitHub 中打开" onclick="event.stopPropagation();openExternal('${repoUrl(r.owner, r.name)}')">${icon('externalLink', 16)}</button>
+          <button type="button" class="icon-btn" aria-label="在 GitHub 中打开" title="在 GitHub 中打开" onclick="event.stopPropagation();openExternal('${repoUrl(r.owner, r.name)}')">${icon('externalLink', 16)}</button>
         </div>
         <div class="desc muted">分支: ${this.esc(r.branch)}</div>
-        <div class="meta"><span class="tag" id="count-${r.id}">${icon('loader', 14)} 加载中</span></div>
-      </div>`).join('')}</div>`;
+        <div class="meta">${badge} ${retryBtn}</div>
+      </div>`;
+    }).join('')}</div>`;
     this.updateStatus(`${repos.length} 个仓库`);
 
+    // 只为 ready 状态的仓库加载技能数
     for (const r of repos) {
+      if ((r.status || 'ready') !== 'ready') continue;
       try {
         const result = await api.skills.scan(r.id);
         const count = (result.skills||[]).length;
@@ -296,8 +397,7 @@ const App = {
     state.currentRepoId = repoId;
     state.search = '';
     this.renderToolbar();
-    document.getElementById('content').innerHTML =
-      `<div class="empty-state"><div class="icon">${icon('loader', 40)}</div><p>加载中...</p></div>`;
+    document.getElementById('content').innerHTML = this.skeletonGrid(8);
     await this.loadSkills(repoId);
   },
 
@@ -333,8 +433,8 @@ const App = {
 
     const idx = state.skills.indexOf(s);
     const btn = s.installed
-      ? `<button class="btn btn-sm btn-outline" onclick="App.doUninstall(${idx})">移除</button>`
-      : `<button class="btn btn-sm" onclick="App.doInstall(${idx})">安装</button>`;
+      ? `<button type="button" class="btn btn-sm btn-outline" onclick="App.doUninstall(${idx})">移除</button>`
+      : `<button type="button" class="btn btn-sm" onclick="App.doInstall(${idx})">安装</button>`;
 
     return `<div class="skill-card ${s.installed ? 'installed' : ''}">
       <div class="name">${this.esc(s.name)}</div>
@@ -363,26 +463,35 @@ const App = {
         c.innerHTML = `<div class="empty-state"><div class="icon">${icon('search', 40)}</div><p>没有找到匹配的技能</p></div>`;
         return;
       }
-      c.innerHTML = `<div class="card-grid">${skills.map(s => `
-        <div class="skill-card">
-          <div class="name">${this.esc(s.name)}</div>
-          <div class="desc muted">${this.esc(s.source)}</div>
-          <div class="meta">
-            <span class="tag">${icon('download', 12)} ${this.esc(s.installs)}</span>
-          </div>
-          <div class="actions">
-            <button class="btn btn-sm" onclick="App.installFromSkillsSh('${this.esc(s.source)}')">添加并安装</button>
-          </div>
-        </div>`).join('')}</div>`;
+      c.innerHTML = `<div class="card-grid">${skills.map(s => this.skillsShCard(s)).join('')}</div>`;
       this.updateStatus(`找到 ${skills.length} 个技能`);
     } catch (e) {
       c.innerHTML = `<div class="empty-state"><div class="icon">${icon('alertTriangle', 40)}</div><p>搜索失败: ${this.esc(String(e))}</p></div>`;
     }
   },
 
+  skillsShCard(s) {
+    const url = sourceUrl(s.source);
+    const extBtn = url
+      ? `<button type="button" class="icon-btn" aria-label="在 GitHub 中打开" title="在 GitHub 中打开" onclick="event.stopPropagation();openExternal('${url}')">${icon('externalLink', 16)}</button>`
+      : '';
+    return `
+    <div class="skill-card">
+      <div class="card-row">
+        <div class="name">${this.esc(s.name)}</div>
+        ${extBtn}
+      </div>
+      <div class="desc muted">${this.esc(s.source)}</div>
+      <div class="meta"><span class="tag">${icon('download', 12)} ${this.esc(s.installs)}</span></div>
+      <div class="actions">
+        <button type="button" class="btn btn-sm" onclick="App.installFromSkillsSh('${this.esc(s.source)}')">添加并安装</button>
+      </div>
+    </div>`;
+  },
+
   async loadTrending() {
     const c = document.getElementById('content');
-    c.innerHTML = `<div class="empty-state"><div class="icon">${icon('loader', 40)}</div><p>加载中...</p></div>`;
+    c.innerHTML = this.skeletonGrid(8);
     try {
       // skills.sh 没有 trending API，用多个热门关键词搜索聚合
       const hotKeywords = ['git', 'react', 'code', 'python', 'test', 'docker', 'api', 'build'];
@@ -404,15 +513,7 @@ const App = {
         c.innerHTML = `<div class="empty-state"><div class="icon">${icon('moodEmpty', 40)}</div><p>暂无数据</p></div>`;
         return;
       }
-      c.innerHTML = `<div class="card-grid">${top.map(s => `
-        <div class="skill-card">
-          <div class="name">${this.esc(s.name)}</div>
-          <div class="desc muted">${this.esc(s.source)}</div>
-          <div class="meta"><span class="tag">${icon('download', 12)} ${this.esc(s.installs)}</span></div>
-          <div class="actions">
-            <button class="btn btn-sm" onclick="App.installFromSkillsSh('${this.esc(s.source)}')">添加并安装</button>
-          </div>
-        </div>`).join('')}</div>`;
+      c.innerHTML = `<div class="card-grid">${top.map(s => this.skillsShCard(s)).join('')}</div>`;
       this.updateStatus(`${top.length} 个热门技能`);
     } catch (e) {
       c.innerHTML = `<div class="empty-state"><div class="icon">${icon('alertTriangle', 40)}</div><p>加载失败</p></div>`;
@@ -421,37 +522,35 @@ const App = {
 
   // 从 skills.sh 安装：source 格式如 "github/awesome-copilot"，即 owner/repo
   async installFromSkillsSh(source) {
-    // source 格式: "owner/repo" 或 "github/owner/repo"
-    const parts = source.split('/');
-    let owner, repo;
-    if (parts[0] === 'github' && parts.length >= 3) {
-      owner = parts[1];
-      repo = parts[2];
-    } else if (parts.length >= 2) {
-      owner = parts[0];
-      repo = parts[1];
-    } else {
+    const parsed = parseSource(source);
+    if (!parsed) {
       this.toast('无法解析技能来源: ' + source, 'error');
       return;
     }
+    const { owner, repo } = parsed;
 
     const url = `https://github.com/${owner}/${repo}`;
-    if (!confirm(`将添加仓库 ${owner}/${repo} 并进入浏览技能？`)) return;
+    const ok = await this.confirmDialog(`将添加仓库 ${owner}/${repo} 并进入浏览技能？`);
+    if (!ok) return;
 
-    this.toast('正在 clone...', 'info');
     try {
-      // 先添加仓库
-      await api.repo.add(url, 'main', '');
+      // 立即添加（status: cloning），切到仓库列表展示克隆中状态
+      const added = await api.repo.add(url, 'main', '');
       state.repos = await api.repo.list();
       this.renderRepoCount();
 
-      // 找到新添加的仓库并进入
       const repoId = `${owner}__${repo}`;
       state.view = 'discover';
       state.tab = 'repos';
+      state.search = '';
       this.renderSidebar();
-      await this.enterRepo(repoId);
-      this.toast('仓库已添加', 'success');
+      this.renderContent();
+      this.toast('正在克隆仓库，完成后自动进入...', 'info');
+
+      // 异步 clone，成功后自动进入仓库
+      api.repo.clone(added.owner, added.name, added.branch, added.id)
+        .then(() => { this.enterRepo(repoId); })
+        .catch(e => { this.toast(`克隆失败: ${e}`, 'error'); });
     } catch (e) {
       // 可能已存在，尝试直接进入
       const repoId = `${owner}__${repo}`;
@@ -473,36 +572,36 @@ const App = {
     const s = state.settings;
     const appVersion = state.appVersion || '1.0.0';
     c.innerHTML = `
-      <div style="max-width:600px">
-        <div class="mb-2">
+      <div class="settings-wrap">
+        <section class="setting-section">
           <h4>关于</h4>
-          <div class="flex gap-sm" style="margin-top:8px;align-items:center">
+          <div class="setting-row">
             <span class="muted">AIKit v${appVersion}</span>
-            <button class="btn btn-sm btn-outline" id="check-update-btn" onclick="App.checkAppUpdate()">${icon('refresh', 14)} 检查更新</button>
+            <button type="button" class="btn btn-sm btn-outline" id="check-update-btn" onclick="App.checkAppUpdate()">${icon('refresh', 14)} 检查更新</button>
           </div>
-        </div>
-        <div class="mb-2">
+        </section>
+        <section class="setting-section">
           <h4>日志</h4>
-          <div class="flex gap-sm" style="margin-top:8px;flex-wrap:wrap">
+          <div class="setting-row">
             <label class="flex gap-sm"><input type="checkbox" ${s.logEnabled?'checked':''} onchange="App.setSetting('logEnabled',this.checked)"> 启用</label>
-            <select onchange="App.setSetting('logLevel',this.value)">
+            <select aria-label="日志级别" onchange="App.setSetting('logLevel',this.value)">
               ${['error','warn','info','debug','trace'].map(lv=>`<option value="${lv}" ${s.logLevel===lv?'selected':''}>${lv}</option>`).join('')}
             </select>
-            <button class="btn btn-sm btn-outline" onclick="App.viewLogs()">查看</button>
-            <button class="btn btn-sm btn-red" onclick="App.clearLogs()">清空</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="App.viewLogs()">查看</button>
+            <button type="button" class="btn btn-sm btn-red" onclick="App.clearLogs()">清空</button>
           </div>
-        </div>
-        <div class="mb-2">
+        </section>
+        <section class="setting-section">
           <h4>配置</h4>
-          <div class="flex gap-sm" style="margin-top:8px">
-            <button class="btn btn-sm btn-outline" onclick="App.exportConfig()">${icon('upload', 14)} 导出</button>
-            <button class="btn btn-sm btn-outline" onclick="App.importConfig()">${icon('download', 14)} 导入</button>
+          <div class="setting-row">
+            <button type="button" class="btn btn-sm btn-outline" onclick="App.exportConfig()">${icon('upload', 14)} 导出</button>
+            <button type="button" class="btn btn-sm btn-outline" onclick="App.importConfig()">${icon('download', 14)} 导入</button>
           </div>
-        </div>
-        <div class="mb-2">
+        </section>
+        <section class="setting-section">
           <h4>目录</h4>
-          <div id="dir-list" style="margin-top:8px">加载中...</div>
-        </div>
+          <div id="dir-list" class="dir-list">加载中...</div>
+        </section>
       </div>`;
     this.loadDirList();
   },
@@ -527,58 +626,56 @@ const App = {
     this.renderContent();
   },
 
-  onGlobalSearch(val) {
-    // 全局搜索：同步到 state.search 并触发当前页搜索
-    const searchInput = document.getElementById('search-input');
-    if (searchInput) searchInput.value = val;
-    state.search = val;
-    this.renderContent();
-  },
-
   // ═══ 仓库管理 ═══
   showAddRepo() {
     const modal = document.getElementById('modal');
-    document.getElementById('modal-overlay').classList.remove('hidden');
+    const overlay = document.getElementById('modal-overlay');
+    overlay.setAttribute('aria-labelledby', 'modal-title');
+    overlay.classList.remove('hidden');
     const repoListHTML = state.repos.length > 0 ? `
-      <div style="margin-bottom:18px;border-top:1px solid var(--border-subtle);padding-top:16px">
-        <div class="muted" style="margin-bottom:8px;font-size:12px;font-weight:600">已添加仓库</div>
+      <div class="modal-repo-list">
+        <div class="modal-repo-list-label">已添加仓库</div>
         ${state.repos.map(r => `
-          <div class="flex" style="justify-content:space-between;padding:6px 0">
-            <span style="font-size:13px">${this.esc(r.owner)}/${this.esc(r.name)}</span>
+          <div class="modal-repo-row">
+            <span class="modal-repo-name">${this.esc(r.owner)}/${this.esc(r.name)}</span>
             <div class="flex gap-sm">
-              <button class="icon-btn" title="在 GitHub 中打开" onclick="openExternal('${repoUrl(r.owner, r.name)}')">${icon('externalLink', 14)}</button>
-              <button class="btn btn-sm btn-red" onclick="App.deleteRepo('${r.id}','${this.esc(r.owner+'/'+r.name)}')">删除</button>
+              <button type="button" class="icon-btn" aria-label="在 GitHub 中打开" title="在 GitHub 中打开" onclick="openExternal('${repoUrl(r.owner, r.name)}')">${icon('externalLink', 14)}</button>
+              <button type="button" class="btn btn-sm btn-red" onclick="App.deleteRepo('${r.id}','${this.esc(r.owner+'/'+r.name)}')">删除</button>
             </div>
           </div>
         `).join('')}
       </div>` : '';
 
     modal.innerHTML = `
-      <h2>仓库管理</h2>
+      <div class="modal-header">
+        <h2 id="modal-title">仓库管理</h2>
+        <button type="button" class="modal-close" aria-label="关闭" onclick="App.closeModal()">${icon('x', 18)}</button>
+      </div>
       <div class="modal-field">
-        <label>GitHub 地址</label>
+        <label for="repo-url">GitHub 地址</label>
         <input type="text" id="repo-url" placeholder="如 https://github.com/anthropics/skills"
-          oninput="App.parseRepoUrl()" style="width:100%">
-        <div id="repo-parsed" class="muted" style="margin-top:4px;font-size:12px"></div>
+          oninput="App.parseRepoUrl()" class="modal-input-wide">
+        <div id="repo-parsed" class="modal-hint"></div>
       </div>
       <div class="modal-field">
-        <label>分支</label><input type="text" id="repo-branch" value="main">
+        <label for="repo-branch">分支</label><input type="text" id="repo-branch" value="main">
       </div>
       <div class="modal-field">
-        <label>子目录（可选）</label><input type="text" id="repo-subdir" placeholder="如 skills">
+        <label for="repo-subdir">子目录（可选）</label><input type="text" id="repo-subdir" placeholder="如 skills">
       </div>
       <div class="modal-actions">
-        <button class="btn btn-outline" onclick="App.closeModal()">取消</button>
-        <button class="btn" onclick="App.doAddRepo()">添加</button>
+        <button type="button" class="btn btn-outline" onclick="App.closeModal()">取消</button>
+        <button type="button" class="btn" onclick="App.doAddRepo()">添加</button>
       </div>
       ${repoListHTML}
     `;
+    setTimeout(() => document.getElementById('repo-url')?.focus(), 50);
   },
 
   parseRepoUrl() {
     const url = document.getElementById('repo-url').value.trim();
     const hint = document.getElementById('repo-parsed');
-    if (!url) { hint.textContent = ''; return; }
+    if (!url) { hint.textContent = ''; hint.className = 'modal-hint'; return; }
     const m = url.match(/github\.com\/([^/\s]+)\/([^/\s#?]+)/);
     if (m) {
       const tree = url.match(/\/tree\/([^/]+)(\/(.+))?/);
@@ -586,9 +683,11 @@ const App = {
         document.getElementById('repo-branch').value = tree[1];
         if (tree[3]) document.getElementById('repo-subdir').value = tree[3];
       }
-      hint.innerHTML = `<span style="color:var(--success);display:inline-flex;align-items:center;gap:4px">${icon('check', 14)} ${m[1]}/${m[2].replace(/\.git$/,'')}</span>`;
+      hint.className = 'modal-hint ok';
+      hint.innerHTML = `${icon('check', 14)} ${this.esc(m[1])}/${this.esc(m[2].replace(/\.git$/,''))}`;
     } else {
-      hint.innerHTML = `<span style="color:var(--danger);display:inline-flex;align-items:center;gap:4px">${icon('alertTriangle', 14)} 无法识别</span>`;
+      hint.className = 'modal-hint err';
+      hint.innerHTML = `${icon('alertTriangle', 14)} 无法识别`;
     }
   },
 
@@ -598,18 +697,37 @@ const App = {
     const subdir = document.getElementById('repo-subdir').value.trim();
     if (!url) { this.toast('请填写地址', 'warn'); return; }
     this.closeModal();
-    this.toast('正在 clone...', 'info');
     try {
-      await api.repo.add(url, branch, subdir);
+      // 立即添加仓库元数据（status: cloning），列表马上显示
+      const repo = await api.repo.add(url, branch, subdir);
       state.repos = await api.repo.list();
       this.renderContent();
       this.renderRepoCount();
-      this.toast('添加成功', 'success');
+      this.toast('正在克隆仓库，请稍候...', 'info');
+      // 异步 clone（不阻塞，完成后通过事件通知）
+      api.repo.clone(repo.owner, repo.name, repo.branch, repo.id).catch(e => {
+        this.toast(`克隆失败: ${e}`, 'error');
+      });
     } catch (e) { this.toast('添加失败: ' + e, 'error'); }
   },
 
+  // 重试克隆失败的仓库
+  async retryClone(repoId, owner, name, branch) {
+    // 先把状态改回 cloning 并重渲染
+    const r = state.repos.find(x => x.id === repoId);
+    if (r) { r.status = 'cloning'; this.renderContent(); }
+    this.toast('正在重新克隆...', 'info');
+    try {
+      await api.repo.clone(owner, name, branch, repoId);
+      this.toast('克隆成功', 'success');
+    } catch (e) {
+      this.toast(`克隆失败: ${e}`, 'error');
+    }
+  },
+
   async deleteRepo(id, name) {
-    if (!confirm(`删除仓库 ${name}？`)) return;
+    const ok = await this.confirmDialog(`删除仓库 ${this.esc(name)}？`);
+    if (!ok) return;
     try {
       await api.repo.del(id);
       state.repos = await api.repo.list();
@@ -651,7 +769,8 @@ const App = {
   async doUninstall(idx) {
     const skill = state.skills[idx];
     if (!skill) return;
-    if (!confirm(`卸载「${skill.name}」？\n将从 SSOT 和所有工具目录移除。`)) return;
+    const ok = await this.confirmDialog(`卸载「${this.esc(skill.name)}」？\n将从 SSOT 和所有工具目录移除。`);
+    if (!ok) return;
     try {
       await api.skills.uninstall(skill.dirName);
       this.toast('已卸载', 'success');
@@ -662,7 +781,8 @@ const App = {
 
   // 从我的技能页卸载
   async uninstallSkill(dirName) {
-    if (!confirm(`卸载「${dirName}」？`)) return;
+    const ok = await this.confirmDialog(`卸载「${this.esc(dirName)}」？`);
+    if (!ok) return;
     try {
       await api.skills.uninstall(dirName);
       this.toast('已卸载', 'success');
@@ -760,42 +880,43 @@ const App = {
     if (!el) return;
     try {
       const dirs = await api.dir.list();
-      this._dirPaths = []; // 缓存所有路径，按索引引用
+      this._dirPaths = [];
 
-      let html = '<table style="width:100%;font-size:12px"><tbody>';
+      const row = (key, val, idx) => `<div class="dir-row">
+        <span class="dir-key">${this.esc(key)}</span>
+        <span class="dir-val">${this.esc(val)}</span>
+        <button type="button" class="btn btn-sm btn-outline dir-open-btn" onclick="App.openDir(${idx})">打开</button>
+      </div>`;
 
-      html += '<tr><td colspan="2" style="padding-top:8px;font-weight:600;color:var(--text)">工具目录</td></tr>';
+      const rowDisabled = (key) => `<div class="dir-row">
+        <span class="dir-key">${this.esc(key)}</span>
+        <span class="dir-val"><span class="tag tag-dim">未安装</span></span>
+      </div>`;
+
+      let html = '<div class="dir-group-label">工具目录</div>';
       let idx = 0;
       for (const [k, v] of Object.entries(dirs.app)) {
         this._dirPaths.push(v);
-        html += `<tr><td class="muted" style="padding:3px 0;width:120px">${k}</td><td style="padding:3px 0">
-          <span class="muted" style="word-break:break-all">${this.esc(v)}</span>
-          <button class="btn btn-sm btn-outline" style="margin-left:8px;padding:2px 8px" onclick="App.openDir(${idx})">打开</button>
-        </td></tr>`;
+        html += row(k, v, idx);
         idx++;
       }
 
-      html += '<tr><td colspan="2" style="padding-top:12px;font-weight:600;color:var(--text)">Skills 目录</td></tr>';
+      html += '<div class="dir-group-label">Skills 目录</div>';
       for (const [k, v] of Object.entries(dirs.tools)) {
         const t = state.tools.find(x => x.id === k);
         const isInstalled = t && t.installed !== false;
-        this._dirPaths.push(v);
+        const label = t ? t.name : k;
         if (isInstalled) {
-          html += `<tr><td class="muted" style="padding:3px 0;width:120px">${t ? t.name : k}</td><td style="padding:3px 0">
-            <span class="muted" style="word-break:break-all">${this.esc(v)}</span>
-            <button class="btn btn-sm btn-outline" style="margin-left:8px;padding:2px 8px" onclick="App.openDir(${idx})">打开</button>
-          </td></tr>`;
+          this._dirPaths.push(v);
+          html += row(label, v, idx);
+          idx++;
         } else {
-          html += `<tr><td class="muted" style="padding:3px 0;width:120px">${t ? t.name : k}</td><td style="padding:3px 0">
-            <span class="tag" style="color:var(--text-dim)">未安装</span>
-          </td></tr>`;
+          html += rowDisabled(label);
         }
-        idx++;
       }
 
-      html += '</tbody></table>';
       el.innerHTML = html;
-    } catch { el.innerHTML = '加载失败'; }
+    } catch { el.innerHTML = '<span class="muted">加载失败</span>'; }
   },
 
   async openDir(idx) {
@@ -806,10 +927,15 @@ const App = {
 
   async viewLogs() {
     const logs = await api.logs.read(100);
-    document.getElementById('modal-overlay').classList.remove('hidden');
+    const overlay = document.getElementById('modal-overlay');
+    overlay.setAttribute('aria-labelledby', 'modal-title');
+    overlay.classList.remove('hidden');
     document.getElementById('modal').innerHTML = `
-      <h2>操作日志</h2>
-      <div style="max-height:400px;overflow-y:auto">
+      <div class="modal-header">
+        <h2 id="modal-title">操作日志</h2>
+        <button type="button" class="modal-close" aria-label="关闭" onclick="App.closeModal()">${icon('x', 18)}</button>
+      </div>
+      <div class="log-scroll">
         ${logs.length === 0 ? '<p class="muted text-center">暂无日志</p>' :
           logs.map(l => `<div class="log-entry ${l.level}">
             <span class="log-time">${l.time}</span>
@@ -817,10 +943,15 @@ const App = {
             <span>${this.esc(l.action)} ${l.detail ? this.esc(JSON.stringify(l.detail)) : ''}</span>
           </div>`).join('')}
       </div>
-      <div class="modal-actions"><button class="btn btn-outline" onclick="App.closeModal()">关闭</button></div>`;
+      <div class="modal-actions"><button type="button" class="btn btn-outline" onclick="App.closeModal()">关闭</button></div>`;
   },
 
-  async clearLogs() { if (confirm('清空日志？')) { await api.logs.clear(); this.toast('已清空', 'success'); } },
+  async clearLogs() {
+    const ok = await this.confirmDialog('清空日志？');
+    if (!ok) return;
+    await api.logs.clear();
+    this.toast('已清空', 'success');
+  },
 
   async exportConfig() {
     try {
@@ -864,6 +995,50 @@ const App = {
 
   closeModal() { document.getElementById('modal-overlay').classList.add('hidden'); },
 
+  // 自定义确认对话框，替代原生 confirm()
+  confirmDialog(message, { confirmText = '确认', cancelText = '取消', danger = true } = {}) {
+    return new Promise((resolve) => {
+      const overlay = document.getElementById('modal-overlay');
+      const modal = document.getElementById('modal');
+      overlay.setAttribute('aria-labelledby', 'confirm-title');
+      overlay.classList.remove('hidden');
+
+      const cleanup = (val) => {
+        overlay.removeEventListener('keydown', onKey);
+        this.closeModal();
+        resolve(val);
+      };
+      const onKey = (e) => {
+        if (e.key === 'Escape') { e.stopPropagation(); cleanup(false); }
+      };
+      overlay.addEventListener('keydown', onKey);
+
+      modal.innerHTML = `
+        <div class="dialog" role="alertdialog" aria-modal="true" aria-labelledby="confirm-title">
+          <div class="dialog-body" id="confirm-title">${message}</div>
+          <div class="modal-actions">
+            <button type="button" class="btn btn-outline" id="confirm-cancel">${cancelText}</button>
+            <button type="button" class="btn ${danger ? 'btn-red' : ''}" id="confirm-ok">${confirmText}</button>
+          </div>
+        </div>`;
+      const okBtn = document.getElementById('confirm-ok');
+      const cancelBtn = document.getElementById('confirm-cancel');
+      okBtn.addEventListener('click', () => cleanup(true));
+      cancelBtn.addEventListener('click', () => cleanup(false));
+      setTimeout(() => { cancelBtn.focus(); }, 50);
+    });
+  },
+
+  // 骨架屏：n 个卡片占位
+  skeletonGrid(n) {
+    const card = () => `<div class="skeleton-card">
+      <div class="skeleton line title"></div>
+      <div class="skeleton line w-80"></div>
+      <div class="skeleton line w-40"></div>
+    </div>`;
+    return `<div class="skeleton-grid">${Array.from({length: n}, card).join('')}</div>`;
+  },
+
   esc(s) {
     if (!s) return '';
     return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
@@ -873,7 +1048,10 @@ const App = {
     const c = document.getElementById('toast-container');
     const el = document.createElement('div');
     el.className = `toast ${type}`;
-    el.textContent = msg;
+    el.setAttribute('role', type === 'error' ? 'alert' : 'status');
+    const iconMap = { info: 'helpCircle', success: 'check', error: 'alertTriangle', warn: 'alertTriangle' };
+    el.innerHTML = `<div class="toast-icon" aria-hidden="true">${icon(iconMap[type] || 'helpCircle', 18)}</div><div class="toast-body"></div>`;
+    el.querySelector('.toast-body').textContent = msg;
     c.appendChild(el);
     setTimeout(() => el.remove(), 3500);
   },
