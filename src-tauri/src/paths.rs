@@ -1,4 +1,18 @@
 use std::path::PathBuf;
+use std::process::Command;
+
+/// 创建一个已隐藏控制台窗口的子进程 Command（Windows 专用优化）
+/// 在 Windows 上，默认会为子进程弹出一个 cmd 黑框，影响体验。
+/// 通过 CREATE_NO_WINDOW (0x08000000) 标志隐藏它。
+pub fn silent_cmd(program: &str) -> Command {
+    let mut cmd = Command::new(program);
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000);
+    }
+    cmd
+}
 
 /// 获取用户 home 目录 (Windows: C:\Users\<user>)
 pub fn home_dir() -> PathBuf {
@@ -65,7 +79,7 @@ pub fn is_tool_installed(tool_id: &str) -> bool {
 fn check_cmd(cmd: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
-        std::process::Command::new("where")
+        silent_cmd("where")
             .arg(cmd)
             .output()
             .map(|o| o.status.success())
@@ -73,7 +87,7 @@ fn check_cmd(cmd: &str) -> bool {
     }
     #[cfg(not(target_os = "windows"))]
     {
-        std::process::Command::new("which")
+        silent_cmd("which")
             .arg(cmd)
             .output()
             .map(|o| o.status.success())

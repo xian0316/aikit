@@ -452,7 +452,7 @@ fn urlencode(s: &str) -> String {
 /// 用 std HTTP 客户端请求（不依赖 reqwest crate）
 fn reqwest_blocking_get(url: &str) -> Result<Value, Box<dyn std::error::Error>> {
     // 使用 PowerShell 的 Invoke-RestMethod 作为 HTTP 客户端
-    let output = std::process::Command::new("powershell")
+    let output = crate::paths::silent_cmd("powershell")
         .args([
             "-NoProfile", "-Command",
             &format!(

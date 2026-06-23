@@ -1,6 +1,5 @@
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 
 use crate::paths;
 use crate::logger;
@@ -21,7 +20,7 @@ pub fn clone_repo(
     }
 
     let url = format!("https://github.com/{}/{}.git", owner, name);
-    let output = Command::new("git")
+    let output = paths::silent_cmd("git")
         .args([
             "clone",
             "--branch",
@@ -54,7 +53,7 @@ pub fn pull_repo(repo_id: &str) -> Result<String, String> {
         return Err("仓库缓存不存在".to_string());
     }
 
-    let output = Command::new("git")
+    let output = paths::silent_cmd("git")
         .args(["pull", "origin", "--force"])
         .current_dir(&local_path)
         .output()

@@ -53,8 +53,7 @@ pub fn toggle_app(skill_name: &str, tool_id: &str, enabled: bool) -> Result<(), 
         if mode == "symlink" {
             #[cfg(target_os = "windows")]
             {
-                use std::process::Command;
-                let output = Command::new("cmd")
+                let output = crate::paths::silent_cmd("cmd")
                     .args(["/c", "mklink", "/J", dest.to_str().unwrap_or(""), ssot_src.to_str().unwrap_or("")])
                     .output()
                     .map_err(|e| e.to_string())?;
@@ -309,8 +308,7 @@ pub fn install_skill(
         // Windows junction（不需要管理员权限）
         #[cfg(target_os = "windows")]
         {
-            use std::process::Command;
-            let output = Command::new("cmd")
+            let output = crate::paths::silent_cmd("cmd")
                 .args([
                     "/c",
                     "mklink",
